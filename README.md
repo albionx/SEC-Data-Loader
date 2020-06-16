@@ -9,3 +9,11 @@ This script processes the .txt files from the SEC's Financial Statement Data Set
 
 An explanation of the schema of these tables is present here:
 https://www.sec.gov/files/aqfs.pdf
+
+## Features
+- Filter by Company name
+- Filter by Filing type (10-K, 10-Q, 8-K)
+
+## To Do
+- Add support for iterating through files of various quarters
+- Add support for filtering the data to only certain years
