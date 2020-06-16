@@ -142,8 +142,9 @@ cython_debug/
 *.sqlite
 *.sql
 
-# The ocassional testing file
+# Misc files I tend to create
 testing.py
+todo.md
 
 # The data directory
 2020Q1/

@@ -16,14 +16,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-
-"""
-TODO: 
-> agregarle la logica de que parsee varios archivos
-> Luego podría poner los CSV en un DO Droplet y hacer SSH para hacer las queries
-> Luego hacer un FE
-"""
-
 import sqlite3
 try:
     from PyInquirer import style_from_dict, Token, prompt
