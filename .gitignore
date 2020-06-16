@@ -142,5 +142,8 @@ cython_debug/
 *.sqlite
 *.sql
 
+# The ocassional testing file
+testing.py
+
 # The data directory
 2020Q1/
