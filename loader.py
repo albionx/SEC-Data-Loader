@@ -22,35 +22,37 @@ try:
 except ImportError:
     print ('PyInquirer missing. To install, please run: pip install PyInquirer')
     quit()
+try:
+    from tqdm import tqdm
+except ImportError:
+    print ('TQDM missing. To install, please run: pip install TQDM')
+    quit()
 
 class dataset:
 
-	def __init__(self, databaseName, tableName, creationSql, sourceFile):
+	def __init__(self, databaseName, tableName, creationSql, filename):
 		self.databaseName = databaseName
 		self.tableName = tableName
 		self.creationSql = creationSql
-		self.sourceFile = sourceFile
+		self.filename = filename
 
 	def setupTable(self):
-		print ('Setting up', self.tableName)
 		with sqlite3.connect(self.databaseName) as database:
 			database.execute(self.creationSql)
 			database.commit()
 
 	def resetTable(self):
-		print ('Resetting table ' + self.tableName + '...\r',end='')
 		with sqlite3.connect(self.databaseName) as database:
 			sql = "DROP TABLE IF EXISTS {};".format(self.tableName)
 			database.execute(sql)
 			database.commit()
-		print ('Resetting table ' + self.tableName + ': Complete!')
 
-	def populateTable(self, adsh = None, filings = None):
-		print ('Populating table ' + self.tableName + '...\r',end='')
+	def populateTable(self, fileLocation, adshList = None, filings = None, tagVersionList = None):
 
 		with sqlite3.connect(self.databaseName) as database:
 			cursor = database.cursor()
-			with open(self.sourceFile) as fileHandle:
+
+			with open(fileLocation+self.filename) as fileHandle:
 
 				recordsList = list()
 
@@ -58,16 +60,23 @@ class dataset:
 				schema = tuple(fileHandle.readline().replace('\n','').split('\t'))
 				num_replacements = str('?,'*len(schema))[:-1]
 
-				# load relevant lines in memory
-				if self.tableName == 'tag': #
-					for line in fileHandle:
-						parsed_line = (line.split('\t'))
-						recordsList.append(parsed_line)	
-				elif self.tableName in ['num','pre','sub']:  
+				# Load relevant lines in memory
+
+				# For the Num, Pre and Sub tables, it's only the rows where the filing matches the company, year and form required by the user
+				if self.tableName in ['num','pre','sub']:  
 					adsh_position = schema.index('adsh')
 					for line in fileHandle:
 						parsed_line = (line.split('\t'))
-						if parsed_line[adsh_position] in adsh:
+						if parsed_line[adsh_position] in adshList:
+							recordsList.append(parsed_line)
+
+				# For the Tag table, it's only the rows where the 'tag' and 'version' matches that of the lines in the 'pre' statement for a particular filing 
+				elif self.tableName == 'tag':
+					tag_position = schema.index('tag')
+					version_position = schema.index('version')
+					for line in fileHandle:
+						parsed_line = (line.split('\t'))
+						if (parsed_line[tag_position],parsed_line[version_position]) in tagVersionList:
 							recordsList.append(parsed_line)
 
 				# drop them into the DB
@@ -76,28 +85,29 @@ class dataset:
 					'''. format(self.tableName, schema, num_replacements), recordsList)
 				database.commit()
 
-		print ('Populating table ' + self.tableName + ': Complete!')
+def obtainAdshList(name, filings, fileLocations):
 
-def obtainAdshes(name, filings, lookupTable):
-
-	""" Scans the Submissions file to find the ADSH keys corresponding to the filings selected """
+	""" Scans the Submissions files to find the ADSH keys corresponding to the filings selected """
 	
 	adshList = list()
-	with open(lookupTable.sourceFile) as fileHandle:
 
-		# read schema and advance one line
-		schema = tuple(fileHandle.readline().replace('\n','').split('\t'))
-		name_position = schema.index('name')
-		adsh_position = schema.index('adsh')
-		filing_position = schema.index('form')
+	for fileLocation in tqdm(fileLocations, desc='Obtaining filing IDs:         ', bar_format = '{desc}{bar}| {percentage:3.0f}% [Duration: {elapsed}]'):
 
-		# scan for the appropriate adsh's		
-		for line in fileHandle:
-			parsed_line = line.split('\t')
-			if parsed_line[name_position].lower() == name.lower() and parsed_line[filing_position] in filings:
-				adshList.append(parsed_line[adsh_position])
-		print ('Debug line - list of ADSH is:', adshList)
-		return adshList
+		with open(fileLocation+'sub.txt') as fileHandle:
+
+			# read schema and advance one line
+			schema = tuple(fileHandle.readline().replace('\n','').split('\t'))
+			name_position = schema.index('name')
+			adsh_position = schema.index('adsh')
+			filing_position = schema.index('form')
+
+			# scan for the appropriate adsh's		
+			for line in fileHandle:
+				parsed_line = line.split('\t')
+				if parsed_line[name_position].lower() == name.lower() and parsed_line[filing_position] in filings:
+					adshList.append(parsed_line[adsh_position])
+
+	return adshList
 
 def userInput():
 	""" Retrieves the user's choice of company, filing type, year and preference for handling of the data in the database """
@@ -124,7 +134,7 @@ def userInput():
 	            {'name': '2009', 'checked':True}, {'name': '2010', 'checked':True}, {'name': '2011', 'checked':True}, 
 	            {'name': '2012', 'checked':True}, {'name': '2013', 'checked':True}, {'name': '2014', 'checked':True}, 
 	            {'name': '2015', 'checked':True}, {'name': '2016', 'checked':True}, {'name': '2017', 'checked':True}, 
-	            {'name': '2018', 'checked':True}, {'name': '2019', 'checked':True}
+	            {'name': '2018', 'checked':True}, {'name': '2019', 'checked':True}, {'name': '2020', 'checked':True}
 	            ],
 	        'when': lambda answers: answers.get('name', '') != ''
 	    },
@@ -144,7 +154,10 @@ def userInput():
 	        'when': lambda answers: answers.get('filings', []) != [] 
 	    }
 	]
-	return prompt(questions, style=style)
+	print ('')
+	answers = prompt(questions, style=style)
+	print ('')
+	return answers
 
 def initializeDatasets():
 
@@ -153,7 +166,7 @@ def initializeDatasets():
 	sub = dataset(
 		databaseName ='SEC.sqlite',
 		tableName ='sub', 
-		sourceFile ='2020Q1/sub.txt',
+		filename = 'sub.txt',
 		creationSql = """
 		CREATE TABLE IF NOT EXISTS sub (
 		    adsh TEXT(20) NOT NULL,
@@ -202,7 +215,7 @@ def initializeDatasets():
 	tag = dataset(
 		databaseName ='SEC.sqlite',
 		tableName ='tag', 
-		sourceFile ='2020Q1/tag.txt',
+		filename = 'tag.txt',
 		creationSql = """
 		CREATE TABLE IF NOT EXISTS tag (
 		    tag TEXT(256) NOT NULL,
@@ -224,7 +237,7 @@ def initializeDatasets():
 	num = dataset(
 		databaseName ='SEC.sqlite',
 		tableName ='num', 
-		sourceFile ='2020Q1/num.txt',
+		filename = 'num.txt',
 		creationSql = """
 		CREATE TABLE IF NOT EXISTS num (
 		    adsh TEXT(20) NOT NULL,
@@ -246,7 +259,7 @@ def initializeDatasets():
 	pre = dataset(
 		databaseName ='SEC.sqlite',
 		tableName ='pre', 
-		sourceFile ='2020Q1/pre.txt',
+		filename = 'pre.txt',
 		creationSql = """
 		CREATE TABLE IF NOT EXISTS pre (
 		    adsh TEXT(20) NOT NULL,
@@ -266,42 +279,95 @@ def initializeDatasets():
 
 	return [sub, tag, num, pre]
 
+def getFileLocations(years, filings):
+
+	""" Returns a list with the folder names where the data will be found """
+
+	fileLocations = list()
+	for year in years:
+		if filings == ['10-K']:
+			fileLocations.append(year+'q1/') # only valid if the user wants solely 10-K's as they are filed in Q1
+		else:
+			fileLocations.append(year+'q1/')
+			fileLocations.append(year+'q2/')
+			fileLocations.append(year+'q3/')
+			fileLocations.append(year+'q4/')
+	return fileLocations
+
+def obtainTagVersionList(adshList, fileLocation):
+
+	""" Scans the Pre file to find the Tags and the Versions used in the filing in question so as to populate the Tags table with only that subset """
+
+	with open(fileLocation+'pre.txt') as fileHandle:
+
+		tagVersionList = list()
+
+		# read schema and advance one line
+		schema = tuple(fileHandle.readline().replace('\n','').split('\t'))
+		adsh_position = schema.index('adsh')
+		tag_position = schema.index('tag')
+		version_position = schema.index('version')
+
+		# scan for the appropriate adsh's and create a tuple
+		for line in fileHandle:
+			parsed_line = line.split('\t')
+			if parsed_line[adsh_position] in adshList:
+				tagVersionList.append((parsed_line[tag_position],parsed_line[version_position]))
+
+	return tagVersionList
+
 def main():
 
-	# Get the user input decision and initialize the classes
+	# Get the user input decision
 	userRequest = userInput()
 	if userRequest.get('name', '') == '': quit()
 
+	# Initialize the classes
 	[sub, tag, num, pre] = initializeDatasets()
 
+	# Set up the data structure holding the file locations to look into
+	fileLocations = getFileLocations(years = userRequest['years'], filings = userRequest['filings'])
+
 	# Obtain the adshes from the Sub dataset
-	adsh = obtainAdshes(name = userRequest['name'], filings = userRequest['filings'], lookupTable = sub, )
-	if adsh == []:
+	adshList = obtainAdshList(name = userRequest['name'], filings = userRequest['filings'], fileLocations = fileLocations)
+	if adshList == []:
 		print ('Could not find a filing under the company name {} with filings {}'.format(userRequest['name'], userRequest['filings']))
 		quit()
 
 	# If the user requested it, start by wiping the dataset clean
 	if userRequest.get('dataHandling') == 'wipe and start again':
-		for dataset in [sub, tag, num, pre]:
+		for dataset in tqdm([sub, tag, num, pre], desc='Wiping clean existing tables: ', bar_format = '{desc}{bar}| {percentage:3.0f}% [Duration: {elapsed}]'):
 			dataset.resetTable()
 
-	# Start population process
+	# Processing
+	with tqdm(total=100 * len(fileLocations), bar_format = '{desc}  {bar}| {percentage:3.0f}% [Duration: {elapsed}]') as progressBar:
 
-	# Sub table
-	sub.setupTable()
-	sub.populateTable(adsh = adsh, filings = userRequest['filings'])
+		for fileLocation in fileLocations:
 
-	# Pre table
-	pre.setupTable()
-	pre.populateTable(adsh = adsh)
+			# Sub table
+			progressBar.set_description('Populating table sub from {}'.format(fileLocation))
+			sub.setupTable()
+			sub.populateTable(adshList = adshList, filings = userRequest['filings'], fileLocation = fileLocation)
+			progressBar.update(25)
 
-	# Tag table
-	tag.setupTable()
-	tag.populateTable()
+			# Pre table
+			progressBar.set_description('Populating table pre from {}'.format(fileLocation))
+			pre.setupTable()
+			pre.populateTable(adshList = adshList, fileLocation = fileLocation)
+			tagVersionList = obtainTagVersionList(adshList = adshList, fileLocation = fileLocation)
+			progressBar.update(25)
 
-	# Num table
-	num.setupTable()
-	num.populateTable(adsh = adsh)
+			# Tag table
+			progressBar.set_description('Populating table tag from {}'.format(fileLocation))
+			tag.setupTable()
+			tag.populateTable(adshList = adshList, fileLocation = fileLocation, tagVersionList = tagVersionList)
+			progressBar.update(25)
+
+			# Num table
+			progressBar.set_description('Populating table num from {}'.format(fileLocation))
+			num.setupTable()
+			num.populateTable(adshList = adshList, fileLocation = fileLocation)
+			progressBar.update(25)
 
 if __name__ == '__main__':
 	main()
